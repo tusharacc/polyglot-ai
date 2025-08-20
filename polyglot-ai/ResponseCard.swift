@@ -94,11 +94,12 @@ struct ResponseCard: View {
     
     private var contentText: some View {
         ScrollView {
-            Text(response.isExpanded ? response.content : response.previewContent)
+            Text(parseMarkdown(response.isExpanded ? response.content : response.previewContent))
                 .font(.body)
                 .foregroundColor(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 4)
+                .textSelection(.enabled)
         }
         .frame(maxHeight: response.isExpanded ? 300 : 80)
         .animation(.easeInOut(duration: 0.3), value: response.isExpanded)
@@ -176,6 +177,18 @@ struct ResponseCard: View {
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
+    
+    private func parseMarkdown(_ text: String) -> AttributedString {
+        do {
+            // Parse full Markdown including headers, lists, etc.
+            let attributedString = try AttributedString(markdown: text)
+            return attributedString
+        } catch {
+            // Fallback to plain text if Markdown parsing fails
+            print("Markdown parsing failed: \(error.localizedDescription)")
+            return AttributedString(text)
+        }
+    }
 }
 
 #Preview {
@@ -183,7 +196,24 @@ struct ResponseCard: View {
         ResponseCard(response: .constant(LLMResponse(
             provider: .claude,
             status: .success,
-            content: "This is a sample response from Claude. It can be quite long and will show a preview initially, but can be expanded to show the full content.",
+            content: """
+            # Sample Claude Response
+            
+            Here's how **bold text** and *italic text* render in Markdown.
+            
+            ## Code Example
+            ```swift
+            let message = "Hello, World!"
+            print(message)
+            ```
+            
+            ## List Items
+            - First item with **bold**
+            - Second item with *italics*
+            - Third item with [link](https://example.com)
+            
+            This demonstrates basic Markdown rendering capabilities.
+            """,
             timestamp: Date()
         )))
         

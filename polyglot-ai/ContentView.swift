@@ -264,10 +264,11 @@ struct ContentView: View {
             Divider()
             
             ScrollView {
-                Text(summary.summaryContent)
+                Text(parseMarkdown(summary.summaryContent))
                     .font(.body)
                     .foregroundColor(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
             }
             .frame(maxHeight: 200)
             
@@ -464,6 +465,16 @@ struct ContentView: View {
             responses.removeAll()
             conversationSummary = nil
             prompt = ""
+        }
+    }
+    
+    private func parseMarkdown(_ text: String) -> AttributedString {
+        do {
+            let attributedString = try AttributedString(markdown: text)
+            return attributedString
+        } catch {
+            print("Markdown parsing failed: \(error.localizedDescription)")
+            return AttributedString(text)
         }
     }
 }
