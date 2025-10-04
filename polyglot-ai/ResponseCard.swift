@@ -94,14 +94,10 @@ struct ResponseCard: View {
     
     private var contentText: some View {
         ScrollView {
-            Text(parseMarkdown(response.isExpanded ? response.content : response.previewContent))
-                .font(.body)
-                .foregroundColor(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            MarkdownText(content: response.isExpanded ? response.content : response.previewContent)
                 .padding(.horizontal, 4)
-                .textSelection(.enabled)
         }
-        .frame(maxHeight: response.isExpanded ? 300 : 80)
+        .frame(maxHeight: response.isExpanded ? 400 : 100)
         .animation(.easeInOut(duration: 0.3), value: response.isExpanded)
     }
     
@@ -178,17 +174,6 @@ struct ResponseCard: View {
         return formatter.string(from: date)
     }
     
-    private func parseMarkdown(_ text: String) -> AttributedString {
-        do {
-            // Parse full Markdown including headers, lists, etc.
-            let attributedString = try AttributedString(markdown: text)
-            return attributedString
-        } catch {
-            // Fallback to plain text if Markdown parsing fails
-            print("Markdown parsing failed: \(error.localizedDescription)")
-            return AttributedString(text)
-        }
-    }
 }
 
 #Preview {

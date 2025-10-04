@@ -96,3 +96,15 @@ struct ConversationSummary {
         """
     }
 }
+
+struct UserQuestion {
+    let question: String
+    let timestamp: Date
+    let isFollowUp: Bool
+    
+    init(question: String, isFollowUp: Bool = false) {
+        self.question = question
+        self.timestamp = Date()
+        self.isFollowUp = isFollowUp
+    }
+}

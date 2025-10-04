@@ -17,6 +17,9 @@ struct ContentView: View {
     @State private var hasStartedResponse = false
     @State private var isPromptCollapsed = false
     @State private var conversationSummary: ConversationSummary?
+    @State private var isFollowUpExpanded = false
+    @State private var followUpQuestion = ""
+    @State private var conversationThread: [Any] = [] // Mixed array of UserQuestion and [LLMResponse]
     
     var body: some View {
         NavigationView {
@@ -180,11 +183,17 @@ struct ContentView: View {
     private var responseSection: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
+                // Original responses
                 ForEach(responses.indices, id: \.self) { index in
                     ResponseCard(response: $responses[index])
                 }
                 
                 summarySection
+                
+                // Conversation thread (follow-up questions and responses)
+                ForEach(conversationThread.indices, id: \.self) { index in
+                    conversationThreadItem(at: index)
+                }
             }
             .padding()
         }
@@ -262,15 +271,12 @@ struct ContentView: View {
             }
             
             Divider()
-            
+
             ScrollView {
-                Text(parseMarkdown(summary.summaryContent))
-                    .font(.body)
-                    .foregroundColor(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                MarkdownText(content: summary.summaryContent)
+                    .padding(.horizontal, 4)
             }
-            .frame(maxHeight: 200)
+            .frame(maxHeight: 300)
             
             HStack {
                 Button("Copy Summary") {
@@ -279,6 +285,17 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 
                 Spacer()
+                
+                Button("💬 Ask Follow-up") {
+                    withAnimation {
+                        isFollowUpExpanded.toggle()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            
+            if isFollowUpExpanded {
+                followUpInputSection
             }
         }
         .padding()
@@ -316,6 +333,72 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.red, lineWidth: 1)
         )
+    }
+    
+    @ViewBuilder
+    private func conversationThreadItem(at index: Int) -> some View {
+        let item = conversationThread[index]
+        
+        if let userQuestion = item as? UserQuestion {
+            UserQuestionCard(userQuestion: userQuestion)
+        } else if let responses = item as? [LLMResponse] {
+            ForEach(responses.indices, id: \.self) { responseIndex in
+                ResponseCard(response: Binding(
+                    get: {
+                        if let currentResponses = conversationThread[index] as? [LLMResponse], 
+                           responseIndex < currentResponses.count {
+                            return currentResponses[responseIndex]
+                        }
+                        return responses[responseIndex]
+                    },
+                    set: { newValue in
+                        if var currentResponses = conversationThread[index] as? [LLMResponse], 
+                           responseIndex < currentResponses.count {
+                            currentResponses[responseIndex] = newValue
+                            conversationThread[index] = currentResponses
+                        }
+                    }
+                ))
+            }
+        }
+    }
+    
+    private var followUpInputSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            
+            Text("💭 Follow-up question:")
+                .font(.headline)
+                .foregroundColor(.primary)
+            
+            TextEditor(text: $followUpQuestion)
+                .padding()
+                .background(Color.white.opacity(0.8))
+                .cornerRadius(8)
+                .frame(minHeight: 80)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.green.opacity(0.3), lineWidth: 1)
+                )
+            
+            HStack {
+                Button("Cancel") {
+                    withAnimation {
+                        isFollowUpExpanded = false
+                        followUpQuestion = ""
+                    }
+                }
+                .buttonStyle(.bordered)
+                
+                Spacer()
+                
+                Button("Send Follow-up") {
+                    sendFollowUpQuestion()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(followUpQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
     }
     
     private func sendPrompt() {
@@ -465,18 +548,89 @@ struct ContentView: View {
             responses.removeAll()
             conversationSummary = nil
             prompt = ""
+            isFollowUpExpanded = false
+            followUpQuestion = ""
+            conversationThread.removeAll()
         }
     }
     
-    private func parseMarkdown(_ text: String) -> AttributedString {
-        do {
-            let attributedString = try AttributedString(markdown: text)
-            return attributedString
-        } catch {
-            print("Markdown parsing failed: \(error.localizedDescription)")
-            return AttributedString(text)
+    private func sendFollowUpQuestion() {
+        guard !followUpQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let summary = conversationSummary, summary.isReady else { return }
+        
+        // Create context-enhanced prompt
+        let contextualPrompt = summary.contextForFollowUp + followUpQuestion
+        
+        // Add user question to conversation thread
+        let userQuestion = UserQuestion(question: followUpQuestion, isFollowUp: true)
+        conversationThread.append(userQuestion)
+        
+        // Create new response cards for selected providers
+        var newResponses: [LLMResponse] = []
+        
+        if isClaude {
+            let status: ResponseStatus = KeychainManager.shared.hasApiKey(for: .claude) ? .loading : .noApiKey
+            newResponses.append(LLMResponse(provider: .claude, status: status))
+        }
+        
+        if isChatGPT {
+            let status: ResponseStatus = KeychainManager.shared.hasApiKey(for: .openai) ? .loading : .noApiKey
+            newResponses.append(LLMResponse(provider: .openai, status: status))
+        }
+        
+        if isGemini {
+            let status: ResponseStatus = KeychainManager.shared.hasApiKey(for: .gemini) ? .loading : .noApiKey
+            newResponses.append(LLMResponse(provider: .gemini, status: status))
+        }
+        
+        // Add response cards to conversation thread
+        conversationThread.append(newResponses)
+        
+        // Collapse input and clear field
+        withAnimation {
+            isFollowUpExpanded = false
+            followUpQuestion = ""
+        }
+        
+        // Make API calls with contextual prompt
+        makeFollowUpAPICallsAsync(contextualPrompt: contextualPrompt, newResponses: newResponses)
+        
+        print("=== Follow-up Question ===")
+        print("Added to conversation thread - User question + \(newResponses.count) response cards")
+        print("Full context: \(contextualPrompt.prefix(200))...")
+        print("========================")
+    }
+    
+    private func makeFollowUpAPICallsAsync(contextualPrompt: String, newResponses: [LLMResponse]) {
+        for (_, response) in newResponses.enumerated() {
+            if response.status == .loading {
+                Task {
+                    let result = await APIService.shared.sendPrompt(contextualPrompt, to: response.provider)
+                    
+                    await MainActor.run {
+                        // Find the response in the conversation thread and update it
+                        if let threadIndex = conversationThread.lastIndex(where: { $0 is [LLMResponse] }),
+                           var responses = conversationThread[threadIndex] as? [LLMResponse],
+                           let responseIndex = responses.firstIndex(where: { $0.provider == response.provider }) {
+                            
+                            switch result {
+                            case .success(let content):
+                                responses[responseIndex].status = .success
+                                responses[responseIndex].content = content
+                                responses[responseIndex].timestamp = Date()
+                            case .failure(let error):
+                                responses[responseIndex].status = .failed(error.localizedDescription)
+                            }
+                            
+                            // Update the conversation thread
+                            conversationThread[threadIndex] = responses
+                        }
+                    }
+                }
+            }
         }
     }
+    
 }
 
 #Preview {
